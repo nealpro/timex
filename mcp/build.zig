@@ -30,10 +30,16 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(mcp);
     b.installArtifact(cli);
 
-    const tests = b.addTest(.{ .root_module = store_mod });
-    const run_tests = b.addRunArtifact(tests);
+    const store_tests = b.addTest(.{ .root_module = store_mod });
+    const run_store_tests = b.addRunArtifact(store_tests);
+    const mcp_tests = b.addTest(.{ .root_module = mcp_mod });
+    const run_mcp_tests = b.addRunArtifact(mcp_tests);
+    const cli_tests = b.addTest(.{ .root_module = cli_mod });
+    const run_cli_tests = b.addRunArtifact(cli_tests);
     const test_step = b.step("test", "Run MCP/store tests");
-    test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_store_tests.step);
+    test_step.dependOn(&run_mcp_tests.step);
+    test_step.dependOn(&run_cli_tests.step);
 }
 
 fn linkSqlite(module: *std.Build.Module) void {

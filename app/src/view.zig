@@ -105,13 +105,36 @@ fn timerBay(ui: *Ui, model: *const Model) Ui.Node {
                 .on_submit = .create_timer,
                 .semantics = .{ .label = "Timer label" },
             }, .{}),
+            ui.el(.text_field, .{
+                .width = 120,
+                .text = model.durationDraft(),
+                .placeholder = "25m / 1h 30m",
+                .on_input = Ui.inputMsg(.duration_edit),
+                .on_submit = .create_timer,
+                .semantics = .{ .label = "Timer duration" },
+            }, .{}),
+            ui.el(.text_field, .{
+                .width = 260,
+                .text = model.scheduledStartDraft(),
+                .placeholder = "2026-07-21T15:30:00+05:30",
+                .on_input = Ui.inputMsg(.scheduled_start_edit),
+                .on_submit = .create_timer,
+                .semantics = .{ .label = "Optional scheduled start with timezone offset" },
+            }, .{}),
             ui.button(.{
                 .variant = .outline,
                 .on_press = .create_timer,
-                .disabled = model.timerDraftEmpty(),
+                .disabled = !model.timerDraftValid(),
                 .semantics = .{ .label = "Create timer" },
             }, "ADD"),
         }),
+        ui.el(.textarea, .{
+            .height = 58,
+            .text = model.detailsDraft(),
+            .placeholder = "OPTIONAL DETAILS — PURPOSE, USEFUL STEPS, COMPLETION CRITERIA",
+            .on_input = Ui.inputMsg(.details_edit),
+            .semantics = .{ .label = "Optional timer details" },
+        }, .{}),
         ui.el(.separator, .{}, .{}),
         if (model.timer_count == 0)
             emptyTimers(ui, model)
@@ -126,21 +149,38 @@ fn timerKey(timer: *const model_mod.Timer) canvas.UiKey {
 
 fn timerRow(ui: *Ui, now_ms: i64, timer: *const model_mod.Timer) Ui.Node {
     var duration_buffer: [32]u8 = undefined;
-    const elapsed = model_mod.formatDuration(&duration_buffer, timer.elapsedMs(now_ms));
+    const countdown = model_mod.formatDuration(&duration_buffer, if (timer.overdue_ms > 0) timer.overdue_ms else timer.remaining_ms);
+    var timing_buffer: [64]u8 = undefined;
+    const timing = std.fmt.bufPrint(&timing_buffer, "{s} {s}", .{ if (timer.overdue_ms > 0) "OVERDUE" else "REMAINING", countdown }) catch countdown;
+    var schedule_buffer: [180]u8 = undefined;
+    var drift_buffer: [32]u8 = undefined;
+    const drift = model_mod.formatDuration(&drift_buffer, if (timer.schedule_delay_ms < 0) -timer.schedule_delay_ms else timer.schedule_delay_ms);
+    const schedule = if (timer.scheduled_start_ms == 0)
+        "AD HOC"
+    else if (timer.schedule_state == .consumed and timer.schedule_delay_ms != 0)
+        std.fmt.bufPrint(&schedule_buffer, "{s} // {s} → {s} // {s}{s}", .{ @tagName(timer.schedule_state), timer.scheduledStartLocal(), timer.plannedEndLocal(), if (timer.schedule_delay_ms > 0) "LATE +" else "EARLY -", drift }) catch @tagName(timer.schedule_state)
+    else
+        std.fmt.bufPrint(&schedule_buffer, "{s} // {s} → {s}", .{ @tagName(timer.schedule_state), timer.scheduledStartLocal(), timer.plannedEndLocal() }) catch @tagName(timer.schedule_state);
+    _ = now_ms;
     return ui.panel(.{
         .padding = 10,
         .style_tokens = .{ .background = .surface_subtle, .radius = .sm },
         .semantics = .{ .label = timer.label() },
-    }, ui.row(.{ .gap = 10, .cross = .center }, .{
-        ui.column(.{ .gap = 4, .grow = 1 }, .{
-            readout(ui, timer.label(), if (timer.status == .running) .accent else .success),
-            readout(ui, elapsed, .info),
+    }, ui.column(.{ .gap = 6 }, .{
+        ui.row(.{ .gap = 10, .cross = .center }, .{
+            ui.column(.{ .gap = 4, .grow = 1 }, .{
+                readout(ui, timer.label(), if (timer.status == .running) .accent else .success),
+                readout(ui, timing, if (timer.overdue_ms > 0) .destructive else .info),
+                readout(ui, schedule, if (timer.schedule_state == .waiting) .warning else .text_muted),
+            }),
+            if (timer.status == .running)
+                ui.button(.{ .variant = .outline, .icon = "pause", .on_press = Msg{ .pause_timer = timer.id }, .semantics = .{ .label = "Pause timer" } }, "")
+            else
+                ui.button(.{ .variant = .outline, .icon = "play", .on_press = Msg{ .start_timer = timer.id }, .semantics = .{ .label = "Start timer" } }, ""),
+            ui.button(.{ .variant = .outline, .icon = "refresh-cw", .on_press = Msg{ .reset_timer = timer.id }, .semantics = .{ .label = "Reset timer" } }, ""),
+            ui.button(.{ .variant = .outline, .icon = "trash", .on_press = Msg{ .delete_timer = timer.id }, .semantics = .{ .label = "Delete timer" } }, ""),
         }),
-        if (timer.status == .running)
-            ui.button(.{ .variant = .outline, .icon = "pause", .on_press = Msg{ .pause_timer = timer.id }, .semantics = .{ .label = "Pause timer" } }, "")
-        else
-            ui.button(.{ .variant = .outline, .icon = "play", .on_press = Msg{ .start_timer = timer.id }, .semantics = .{ .label = "Start timer" } }, ""),
-        ui.button(.{ .variant = .outline, .icon = "trash", .on_press = Msg{ .delete_timer = timer.id }, .semantics = .{ .label = "Delete timer" } }, ""),
+        if (timer.details().len > 0) readout(ui, timer.details(), .text_muted) else ui.el(.stack, .{ .height = 0 }, .{}),
     }));
 }
 

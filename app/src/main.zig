@@ -19,8 +19,8 @@ pub const update = model_mod.update;
 pub const rootView = view_mod.rootView;
 
 pub const canvas_label = "timex-canvas";
-pub const window_width: f32 = 820;
-pub const window_height: f32 = 520;
+pub const window_width: f32 = 1040;
+pub const window_height: f32 = 700;
 
 const app_permissions = [_][]const u8{ native_sdk.security.permission_command, native_sdk.security.permission_view };
 const shell_views = [_]native_sdk.ShellView{
@@ -31,8 +31,8 @@ const shell_windows = [_]native_sdk.ShellWindow{.{
     .title = "Timex",
     .width = window_width,
     .height = window_height,
-    .min_width = 720,
-    .min_height = 460,
+    .min_width = 920,
+    .min_height = 600,
     .restore_state = false,
     .titlebar = .hidden_inset_tall,
     .views = &shell_views,

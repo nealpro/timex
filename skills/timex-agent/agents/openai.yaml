@@ -1,0 +1,4 @@
+interface:
+  display_name: "Timex Agent"
+  short_description: "Plan and schedule focused work in Timex"
+  default_prompt: "Use $timex-agent to propose a time-boxed schedule for my tasks in Timex."

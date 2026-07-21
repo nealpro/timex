@@ -42,26 +42,29 @@ pub fn build(b: *std.Build) void {
     const app_step = b.step("app", "Build the Native app package");
     app_step.dependOn(&native_build.step);
 
-    const run_command = b.addSystemCommand(&.{
-        "sh",
-        "-c",
-        "timex_mcp_pid=\"\"\n" ++
-        "trap 'if [ -n \"$timex_mcp_pid\" ]; then kill \"$timex_mcp_pid\" 2>/dev/null || true; wait \"$timex_mcp_pid\" 2>/dev/null || true; fi' EXIT INT TERM\n" ++
+    const run_script = "timex_mcp_pid=\n" ++
+        "trap 'if [ -n $timex_mcp_pid ]; then kill $timex_mcp_pid 2>/dev/null || true; wait $timex_mcp_pid 2>/dev/null || true; fi' EXIT INT TERM\n" ++
         "zig-out/bin/timex-mcp </dev/null >/dev/null 2>&1 &\n" ++
         "timex_mcp_pid=$!\n" ++
-        "native dev app --yes\n",
-    });
+        "TIMEX_STORE_BIN=\"$(pwd)/zig-out/bin/timex-store\" native dev app --yes\n";
+    const run_command = b.addSystemCommand(&.{ "sh", "-c", run_script });
     run_command.step.dependOn(b.getInstallStep());
 
     const run_step = b.step("run", "Run the Native app with the MCP server");
     run_step.dependOn(&run_command.step);
 
-    const tests = b.addTest(.{ .root_module = store_mod });
-    const run_tests = b.addRunArtifact(tests);
+    const store_tests = b.addTest(.{ .root_module = store_mod });
+    const run_store_tests = b.addRunArtifact(store_tests);
+    const mcp_tests = b.addTest(.{ .root_module = mcp_mod });
+    const run_mcp_tests = b.addRunArtifact(mcp_tests);
+    const cli_tests = b.addTest(.{ .root_module = cli_mod });
+    const run_cli_tests = b.addRunArtifact(cli_tests);
     const native_test = b.addSystemCommand(&.{ "native", "test", "app", "--yes" });
 
     const test_step = b.step("test", "Run MCP and app tests");
-    test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_store_tests.step);
+    test_step.dependOn(&run_mcp_tests.step);
+    test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&native_test.step);
 }
 

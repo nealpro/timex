@@ -20,17 +20,22 @@ const PendingStoreAction = enum {
     timer_create,
     timer_start,
     timer_pause,
+    timer_reset,
     timer_delete,
 };
 
 pub const Msg = union(enum) {
     project_edit: canvas.TextInputEvent,
     timer_edit: canvas.TextInputEvent,
+    duration_edit: canvas.TextInputEvent,
+    scheduled_start_edit: canvas.TextInputEvent,
+    details_edit: canvas.TextInputEvent,
     create_project,
     select_project: i64,
     create_timer,
     start_timer: i64,
     pause_timer: i64,
+    reset_timer: i64,
     delete_timer: i64,
     refresh_tick: native_sdk.EffectTimer,
     store_done: native_sdk.EffectExit,
@@ -54,6 +59,9 @@ pub const Model = struct {
     now_ms: i64 = 0,
     project_field: canvas.TextBuffer(store_client.max_name_bytes) = .{},
     timer_field: canvas.TextBuffer(store_client.max_label_bytes) = .{},
+    duration_field: canvas.TextBuffer(store_client.max_duration_bytes) = .{},
+    scheduled_start_field: canvas.TextBuffer(store_client.max_scheduled_start_bytes) = .{},
+    details_field: canvas.TextBuffer(store_client.max_details_bytes) = .{},
     status_storage: [160]u8 = undefined,
     status_len: usize = 0,
     store_inflight: bool = false,
@@ -64,12 +72,15 @@ pub const Model = struct {
     reduce_motion: bool = false,
 
     pub const view_unbound = .{
-        "store_path_storage", "store_path_len", "store_bin_storage",
-        "store_bin_len", "projects", "project_count", "timers",
-        "timer_count", "revision", "now_ms", "project_field",
-        "timer_field", "status_storage", "status_len", "store_inflight",
-        "pending_store_action", "chrome_leading", "header_height",
-        "high_contrast", "reduce_motion", "storePath", "storeBin",
+        "store_path_storage",   "store_path_len",        "store_bin_storage",
+        "store_bin_len",        "projects",              "project_count",
+        "timers",               "timer_count",           "revision",
+        "now_ms",               "project_field",         "timer_field",
+        "duration_field",       "scheduled_start_field", "details_field",
+        "status_storage",       "status_len",            "store_inflight",
+        "pending_store_action", "chrome_leading",        "header_height",
+        "high_contrast",        "reduce_motion",         "storePath",
+        "storeBin",
     };
 
     pub fn storePath(model: *const Model) []const u8 {
@@ -100,6 +111,18 @@ pub const Model = struct {
         return model.timer_field.text();
     }
 
+    pub fn durationDraft(model: *const Model) []const u8 {
+        return model.duration_field.text();
+    }
+
+    pub fn scheduledStartDraft(model: *const Model) []const u8 {
+        return model.scheduled_start_field.text();
+    }
+
+    pub fn detailsDraft(model: *const Model) []const u8 {
+        return model.details_field.text();
+    }
+
     pub fn selectedProject(model: *const Model) ?*const Project {
         for (model.projects[0..model.project_count]) |*project| {
             if (project.id == model.selected_project_id) return project;
@@ -120,7 +143,20 @@ pub const Model = struct {
     }
 
     pub fn timerDraftEmpty(model: *const Model) bool {
-        return std.mem.trim(u8, model.timerDraft(), " \t\r\n").len == 0 or !model.hasSelectedProject();
+        return std.mem.trim(u8, model.timerDraft(), " \t\r\n").len == 0 or
+            std.mem.trim(u8, model.durationDraft(), " \t\r\n").len == 0 or
+            !model.hasSelectedProject();
+    }
+
+    pub fn timerDraftValid(model: *const Model) bool {
+        if (model.timerDraftEmpty()) return false;
+        _ = store_client.parseDuration(model.durationDraft()) catch return false;
+        const scheduled = std.mem.trim(u8, model.scheduledStartDraft(), " \t\r\n");
+        if (scheduled.len > 0) {
+            const instant = store_client.parseRfc3339(scheduled) catch return false;
+            if (instant < model.now_ms) return false;
+        }
+        return true;
     }
 
     pub fn status(model: *const Model) []const u8 {
@@ -170,10 +206,14 @@ pub const Model = struct {
             .project_select => model.setStatus("PROJECT SELECTED", .{}),
             .timer_create => {
                 model.timer_field.clear();
+                model.duration_field.clear();
+                model.scheduled_start_field.clear();
+                model.details_field.clear();
                 model.setStatus("TIMER CREATED", .{});
             },
             .timer_start => model.setStatus("TIMER RUNNING", .{}),
             .timer_pause => model.setStatus("TIMER PAUSED", .{}),
+            .timer_reset => model.setStatus("TIMER RESET", .{}),
             .timer_delete => model.setStatus("TIMER DELETED", .{}),
         }
     }
@@ -201,11 +241,15 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
     switch (msg) {
         .project_edit => |edit| model.project_field.apply(edit),
         .timer_edit => |edit| model.timer_field.apply(edit),
+        .duration_edit => |edit| model.duration_field.apply(edit),
+        .scheduled_start_edit => |edit| model.scheduled_start_field.apply(edit),
+        .details_edit => |edit| model.details_field.apply(edit),
         .create_project => createProject(model, fx),
         .select_project => |id| selectProject(model, fx, id),
         .create_timer => createTimer(model, fx),
         .start_timer => |id| mutateTimer(model, fx, id, .start),
         .pause_timer => |id| mutateTimer(model, fx, id, .pause),
+        .reset_timer => |id| mutateTimer(model, fx, id, .reset),
         .delete_timer => |id| mutateTimer(model, fx, id, .delete),
         .refresh_tick => spawnSnapshot(model, fx),
         .store_done => |exit| model.applyStoreExit(exit),
@@ -236,12 +280,27 @@ fn createTimer(model: *Model, fx: *Effects) void {
     if (model.selected_project_id == 0) return model.setStatus("SELECT PROJECT FIRST", .{});
     const label = model.timerDraft();
     if (std.mem.trim(u8, label, " \t\r\n").len == 0) return;
+    _ = store_client.parseDuration(model.durationDraft()) catch return model.setStatus("INVALID DURATION (TRY 25m OR 1h 30m)", .{});
+    const scheduled = std.mem.trim(u8, model.scheduledStartDraft(), " \t\r\n");
+    if (scheduled.len > 0) {
+        const instant = store_client.parseRfc3339(scheduled) catch return model.setStatus("START MUST BE RFC 3339 WITH OFFSET", .{});
+        if (instant < model.now_ms) return model.setStatus("START TIME IS IN THE PAST", .{});
+    }
     var id_buffer: [32]u8 = undefined;
     const project_id = std.fmt.bufPrint(&id_buffer, "{d}", .{model.selected_project_id}) catch return;
-    spawnStore(model, fx, .timer_create, &.{ model.storeBin(), "timer-create", "--db", model.storePath(), "--project-id", project_id, "--label", label });
+    const details = std.mem.trim(u8, model.detailsDraft(), " \t\r\n");
+    if (scheduled.len > 0 and details.len > 0) {
+        spawnStore(model, fx, .timer_create, &.{ model.storeBin(), "timer-create", "--db", model.storePath(), "--project-id", project_id, "--label", label, "--duration", model.durationDraft(), "--details", details, "--scheduled-start", scheduled });
+    } else if (scheduled.len > 0) {
+        spawnStore(model, fx, .timer_create, &.{ model.storeBin(), "timer-create", "--db", model.storePath(), "--project-id", project_id, "--label", label, "--duration", model.durationDraft(), "--scheduled-start", scheduled });
+    } else if (details.len > 0) {
+        spawnStore(model, fx, .timer_create, &.{ model.storeBin(), "timer-create", "--db", model.storePath(), "--project-id", project_id, "--label", label, "--duration", model.durationDraft(), "--details", details });
+    } else {
+        spawnStore(model, fx, .timer_create, &.{ model.storeBin(), "timer-create", "--db", model.storePath(), "--project-id", project_id, "--label", label, "--duration", model.durationDraft() });
+    }
 }
 
-const TimerAction = enum { start, pause, delete };
+const TimerAction = enum { start, pause, reset, delete };
 
 fn mutateTimer(model: *Model, fx: *Effects, id: i64, action: TimerAction) void {
     var id_buffer: [32]u8 = undefined;
@@ -249,11 +308,13 @@ fn mutateTimer(model: *Model, fx: *Effects, id: i64, action: TimerAction) void {
     const command = switch (action) {
         .start => "timer-start",
         .pause => "timer-pause",
+        .reset => "timer-reset",
         .delete => "timer-delete",
     };
     const pending: PendingStoreAction = switch (action) {
         .start => .timer_start,
         .pause => .timer_pause,
+        .reset => .timer_reset,
         .delete => .timer_delete,
     };
     spawnStore(model, fx, pending, &.{ model.storeBin(), command, "--db", model.storePath(), "--timer-id", id_text });
