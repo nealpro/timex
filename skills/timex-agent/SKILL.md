@@ -7,8 +7,10 @@ description: Use when planning, inspecting, or controlling Timex, the local proj
 
 ## Connection
 
-- Launch the MCP sidecar from the Timex repo with `zig-out/bin/timex-mcp`.
+- Launch the MCP server from the Timex repo with `zig-out/bin/timex-mcp`.
+- Build the standalone MCP/store package with `zig build mcp` or from `mcp/` with `zig build`.
 - Set `TIMEX_DB_PATH=/path/to/timex.sqlite` when you need a test database or a non-default store.
+- The Native app uses `timex-store`; set `TIMEX_STORE_BIN=/path/to/timex-store` if the default `zig-out/bin/timex-store` is not reachable from the app's working directory.
 - If the running app was launched with Native automation enabled, UI artifacts live in `.zig-cache/native-sdk-automation`.
 
 ## Default Workflow

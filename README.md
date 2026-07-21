@@ -2,74 +2,85 @@
 
 Deck-styled native timer app for project-scoped work sessions, exposed to coding agents over MCP.
 
+## Layout
+
+- `app/` is the Native SDK app package. It contains the UI, model, assets, and Native manifest.
+- `mcp/` is the standalone Zig package for SQLite storage, `timex-mcp`, and the `timex-store` helper CLI.
+- The root `build.zig` only orchestrates both packages. It does not import or require a checked-in Native SDK dependency.
+
 ## Features
 
 - Create and select projects.
 - Create, start, pause, and delete labeled timers inside a project.
 - Persist projects and timers in SQLite.
-- Run `timex-mcp` as a stdio MCP sidecar for agent control.
-- Use a deck-inspired Native UI with Geist Pixel typography, smoked-glass timer bays, and phosphor readouts.
+- Run `timex-mcp` as a stdio MCP server for agent control.
+- Let the Native app talk to storage through `timex-store`, so SQLite is isolated from the app binary.
 
 ## Build
 
 ```sh
-zig build
-zig build test
+zig build          # builds timex-mcp, timex-store, and the Native app
+zig build mcp      # builds only the standalone MCP/store binaries
+zig build app      # builds only the Native app via `native build app`
+zig build run      # runs the Native app with the MCP server sidecar
+zig build test     # runs MCP/store tests and Native app tests
 ```
 
-The app binary is `zig-out/bin/timex`; the MCP sidecar is `zig-out/bin/timex-mcp`.
+The root MCP binaries install to `zig-out/bin/timex-mcp` and `zig-out/bin/timex-store`.
+Native app artifacts are produced by the Native CLI under `app/zig-out/`.
 
-Use `TIMEX_DB_PATH=/path/to/timex.sqlite` to point either binary at a specific database.
+## Runtime
 
-<!-- COMMENT
+- Set `TIMEX_DB_PATH=/path/to/timex.sqlite` to use a specific SQLite database.
+- Set `TIMEX_STORE_BIN=/path/to/timex-store` when launching the app from a working directory where `zig-out/bin/timex-store` is not available.
+- MCP clients should launch `zig-out/bin/timex-mcp`.
 
-# Timex
+## Use Timex with a coding agent
 
-A native app authored in TypeScript and markup: the logic lives in
-`src/core.ts` (Model, Msg, update - the app-core subset, compiled to
-native code at build time; no JS runtime ships in the binary) and the
-view in `src/app.native`. There is no Zig in this tree and nothing to
-configure: the build detects `src/core.ts` and wires everything.
-
-## The loop
+Timex is a local stdio MCP server. Build it before starting an agent:
 
 ```sh
-native dev --core   # fastest: run the core's logic under node -
-                    # dispatch messages as JSON lines, watch the model
-                    # and effect transcript (not a renderer)
-native dev          # build and run the real app (markup hot reload)
-native check        # verify core.ts (subset checker) + markup + app.zon
-native build        # ReleaseFast binary in zig-out/bin/
-native test         # the app's test suite
+zig build mcp
 ```
 
-Edit `src/core.ts` for behavior, `src/app.native` for the view, and
-`app.zon` for windows/identity/permissions. Markup binds the model's
-field names exactly as core.ts wrote them (`tickCount` -> `{tickCount}`),
-and exported single-model helpers bind as derived values (`{total}`).
+The repository includes a project-local Codex configuration at `.codex/config.toml`:
 
-## Try the core loop
+```toml
+[mcp_servers.timex]
+command = "zig-out/bin/timex-mcp"
+startup_timeout_sec = 10
+tool_timeout_sec = 30
+```
+
+Start Codex from the repository root so the relative command resolves to the freshly built binary:
 
 ```sh
-printf '%s\n' '{"kind":"increment"}' '{"kind":"toggle_ticking"}' '{"advance":3000}' | native dev --core
+codex
 ```
 
-## Editor support
+You can verify the server from Codex with a prompt such as:
 
-Stock editor TypeScript just works: `package.json` and `tsconfig.json`
-are the editor-and-versioning surface (the tsconfig mirrors the checker's
-own options, so editor errors match `native check`), and
-`node_modules/@native-sdk/core` is a CLI-managed copy of the SDK package
-so `@native-sdk/core` resolves with full IntelliSense. Builds never read
-any of it — delete node_modules and every `native` verb still works; the
-next `native check`/`dev`/`build` puts it back. Running `npm install`
-is optional for the same reason: the CLI materializes and refreshes the
-package itself, and an install simply lands the identical content once
-`@native-sdk/core` is on npm.
+> Use Timex to create a project named `Codex test`, create a timer named `MCP smoke test` in it, start the timer, and report the resulting IDs and state.
 
-## Requirements
+For a disposable test database, set `TIMEX_DB_PATH` before launching Codex:
 
-Node.js 22.15+ (on the 23 line: 23.5+) on PATH (the TypeScript-to-native
-transpiler runs at build time; your shipped binary carries none of it).
+```sh
+TIMEX_DB_PATH=/tmp/timex-codex-test.sqlite codex
+```
 
-COMMENT END -->
+To add Timex to another coding agent, use its stdio MCP configuration and point `command` at the built binary. The command must run with the repository root as its working directory, or use an absolute path:
+
+```json
+{
+  "mcpServers": {
+    "timex": {
+      "command": "/absolute/path/to/timex/zig-out/bin/timex-mcp",
+      "env": {
+        "TIMEX_DB_PATH": "/absolute/path/to/timex.sqlite"
+      }
+    }
+  }
+}
+```
+
+Use the equivalent `mcpServers.timex` entry for agents whose configuration is TOML or YAML. Keep the server on stdio; it does not expose an HTTP endpoint. The available tools and resources are documented in [`skills/timex-agent/SKILL.md`](skills/timex-agent/SKILL.md).

@@ -9,7 +9,7 @@ const geometry = native_sdk.geometry;
 const app_dirs = native_sdk.app_dirs;
 
 const model_mod = @import("model.zig");
-const store_mod = @import("store.zig");
+const store_client = @import("store_client.zig");
 const theme = @import("theme.zig");
 const view_mod = @import("view.zig");
 
@@ -64,8 +64,10 @@ pub fn main(init: std.process.Init) !void {
     defer std.heap.page_allocator.destroy(app_state);
 
     var model = model_mod.initialModel();
-    var path_buffer: [store_mod.max_path_bytes]u8 = undefined;
+    var path_buffer: [store_client.max_path_bytes]u8 = undefined;
     if (resolveDbPath(init, &path_buffer)) |path| model.setStorePath(path);
+    var bin_buffer: [store_client.max_path_bytes]u8 = undefined;
+    if (resolveStoreBin(init, &bin_buffer)) |path| model.setStoreBin(path);
 
     app_state.* = TimexApp.init(std.heap.page_allocator, model, .{
         .name = "timex",
@@ -100,10 +102,15 @@ pub fn resolveDbPath(init: std.process.Init, output: []u8) ?[]const u8 {
     const env = native_sdk.debug.envFromMap(init.environ_map);
     if (init.environ_map.get("TIMEX_DB_PATH")) |override| return copyPath(output, override);
     const platform = app_dirs.currentPlatform();
-    var dir_buffer: [store_mod.max_path_bytes]u8 = undefined;
+    var dir_buffer: [store_client.max_path_bytes]u8 = undefined;
     const data_dir = app_dirs.resolveOne(.{ .name = "timex" }, platform, env, .data, &dir_buffer) catch return copyPath(output, ".zig-cache/timex.sqlite");
     makePath(init.io, data_dir) catch {};
     return app_dirs.join(platform, output, &.{ data_dir, "timex.sqlite" }) catch null;
+}
+
+pub fn resolveStoreBin(init: std.process.Init, output: []u8) ?[]const u8 {
+    if (init.environ_map.get("TIMEX_STORE_BIN")) |override| return copyPath(output, override);
+    return copyPath(output, "zig-out/bin/timex-store");
 }
 
 fn copyPath(output: []u8, path: []const u8) ?[]const u8 {
@@ -120,5 +127,5 @@ fn makePath(io: std.Io, path: []const u8) !void {
 }
 
 test {
-    _ = store_mod;
+    _ = store_client;
 }

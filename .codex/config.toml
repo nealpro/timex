@@ -1,0 +1,7 @@
+# Project-local Codex configuration for testing Timex through MCP.
+# Build the binary first with: zig build mcp
+
+[mcp_servers.timex]
+command = "zig-out/bin/timex-mcp"
+startup_timeout_sec = 10
+tool_timeout_sec = 30

@@ -1,4 +1,7 @@
 .native/
+**/.native/
 zig-out/
 .zig-cache/
+**/zig-out/
+**/.zig-cache/
 node_modules/
